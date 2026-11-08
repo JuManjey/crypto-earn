@@ -1,0 +1,116 @@
+# Ethereum Hoodi: Nethermind (EL) + Lighthouse (BN, VC) + MEV-Boost для Lido CSM.
+# Валидатор вынесен в профиль "validator" и не стартует, пока вы явно его не включите.
+# API и RPC опубликованы только на 127.0.0.1: опубликованные Docker-порты обходят правила ufw.
+name: hoodi-csm
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  execution:
+    image: nethermind/nethermind:${NETHERMIND_VERSION:?set NETHERMIND_VERSION in .env}
+    container_name: hoodi-nethermind
+    restart: unless-stopped
+    stop_grace_period: 3m
+    command:
+      - --config=hoodi
+      - --data-dir=/data
+      - --JsonRpc.Enabled=true
+      - --JsonRpc.Host=0.0.0.0
+      - --JsonRpc.Port=8545
+      - --JsonRpc.EngineHost=0.0.0.0
+      - --JsonRpc.EnginePort=8551
+      - --JsonRpc.JwtSecretFile=/secrets/jwt.hex
+      - --Network.P2PPort=${EL_P2P_PORT:-30303}
+      - --Network.DiscoveryPort=${EL_P2P_PORT:-30303}
+      - --Metrics.Enabled=true
+      - --Metrics.ExposeHost=0.0.0.0
+      - --Metrics.ExposePort=6060
+      - --HealthChecks.Enabled=true
+    ports:
+      - "${EL_P2P_PORT:-30303}:${EL_P2P_PORT:-30303}/tcp"
+      - "${EL_P2P_PORT:-30303}:${EL_P2P_PORT:-30303}/udp"
+      - "127.0.0.1:8545:8545"
+    volumes:
+      - ./data/nethermind:/data
+      - ./secrets/jwt.hex:/secrets/jwt.hex:ro
+    networks: [ethnet]
+    logging: *logging
+
+  consensus:
+    image: sigp/lighthouse:${LIGHTHOUSE_VERSION:?set LIGHTHOUSE_VERSION in .env}
+    container_name: hoodi-lighthouse-bn
+    restart: unless-stopped
+    stop_grace_period: 2m
+    depends_on: [execution]
+    command:
+      - lighthouse
+      - bn
+      - --network=hoodi
+      - --execution-endpoint=http://execution:8551
+      - --execution-jwt=/secrets/jwt.hex
+      - --checkpoint-sync-url=${CHECKPOINT_SYNC_URL:?set CHECKPOINT_SYNC_URL in .env}
+      - --http
+      - --http-address=0.0.0.0
+      - --http-port=5052
+      - --metrics
+      - --metrics-address=0.0.0.0
+      - --metrics-port=5054
+      - --port=${CL_P2P_PORT:-9000}
+      - --quic-port=${CL_QUIC_PORT:-9001}
+      - --builder=http://mevboost:18550
+      - --disable-upnp
+    ports:
+      - "${CL_P2P_PORT:-9000}:${CL_P2P_PORT:-9000}/tcp"
+      - "${CL_P2P_PORT:-9000}:${CL_P2P_PORT:-9000}/udp"
+      - "${CL_QUIC_PORT:-9001}:${CL_QUIC_PORT:-9001}/udp"
+      - "127.0.0.1:5052:5052"
+    volumes:
+      - ./data/lighthouse-bn:/root/.lighthouse
+      - ./secrets/jwt.hex:/secrets/jwt.hex:ro
+    networks: [ethnet]
+    logging: *logging
+
+  mevboost:
+    image: flashbots/mev-boost:${MEVBOOST_VERSION:?set MEVBOOST_VERSION in .env}
+    container_name: hoodi-mevboost
+    restart: unless-stopped
+    command:
+      - -hoodi
+      - -addr=0.0.0.0:18550
+      - -relay-check
+      - -relays=${MEV_RELAYS:?fill MEV_RELAYS from the official Lido allowlist for Hoodi}
+      - -metrics
+      - -metrics-addr=0.0.0.0:18551
+    networks: [ethnet]
+    logging: *logging
+
+  validator:
+    image: sigp/lighthouse:${LIGHTHOUSE_VERSION:?set LIGHTHOUSE_VERSION in .env}
+    container_name: hoodi-lighthouse-vc
+    restart: unless-stopped
+    profiles: ["validator"]
+    depends_on: [consensus]
+    command:
+      - lighthouse
+      - vc
+      - --network=hoodi
+      - --beacon-nodes=http://consensus:5052
+      - --suggested-fee-recipient=${FEE_RECIPIENT:?set FEE_RECIPIENT (Lido EL Rewards Vault for Hoodi) in .env}
+      - --builder-proposals
+      - --enable-doppelganger-protection
+      - --metrics
+      - --metrics-address=0.0.0.0
+      - --metrics-port=5064
+      - --graffiti=${GRAFFITI:-}
+    volumes:
+      - ./data/lighthouse-vc:/root/.lighthouse
+    networks: [ethnet]
+    logging: *logging
+
+networks:
+  ethnet:
+    name: ${ETH_NETWORK_NAME:-hoodi-csm-net}

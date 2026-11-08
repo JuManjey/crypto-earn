@@ -1,0 +1,6 @@
+**/secrets/
+**/data/
+**/backups/
+**/.env
+**/validator_keys/
+**/__pycache__/

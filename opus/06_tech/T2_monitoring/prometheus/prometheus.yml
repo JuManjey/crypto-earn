@@ -1,0 +1,77 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: hoodi
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: node-health
+    static_configs:
+      - targets: ["node-health-exporter:9101"]
+
+  # Имена ниже — сервисы из T1 (сеть hoodi-csm-net подключена как external).
+  - job_name: nethermind
+    static_configs:
+      - targets: ["execution:6060"]
+
+  - job_name: lighthouse-bn
+    static_configs:
+      - targets: ["consensus:5054"]
+
+  - job_name: lighthouse-vc
+    static_configs:
+      - targets: ["validator:5064"]
+
+  - job_name: mev-boost
+    static_configs:
+      - targets: ["mevboost:18551"]
+
+  # Готовность beacon-ноды: успех только при HTTP 200 (206 = ещё синхронизируется).
+  - job_name: blackbox-beacon-ready
+    metrics_path: /probe
+    params:
+      module: [http_200_only]
+    static_configs:
+      - targets: ["http://consensus:5052/eth/v1/node/health"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # Проверка P2P-портов снаружи имеет смысл только с другого хоста (см. README).
+  # - job_name: blackbox-p2p-external
+  #   metrics_path: /probe
+  #   params:
+  #     module: [tcp_connect]
+  #   static_configs:
+  #     - targets: ["PUBLIC_IP_OF_NODE:30303", "PUBLIC_IP_OF_NODE:9000"]
+  #   relabel_configs:
+  #     - source_labels: [__address__]
+  #       target_label: __param_target
+  #     - source_labels: [__param_target]
+  #       target_label: instance
+  #     - target_label: __address__
+  #       replacement: blackbox:9115

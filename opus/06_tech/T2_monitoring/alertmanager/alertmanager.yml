@@ -1,0 +1,37 @@
+# Секреты не хранятся в этом файле: токен бота, chat_id и URL heartbeat читаются из файлов в secrets/.
+# chat_id можно узнать, написав боту и открыв https://api.telegram.org/bot<TOKEN>/getUpdates
+# в браузере на своём компьютере; токен не вставляйте в общие чаты и репозитории.
+route:
+  receiver: telegram
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - alertname = "Watchdog"
+      receiver: heartbeat
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+
+inhibit_rules:
+  - source_matchers:
+      - alertname = "ExecutionClientDown"
+    target_matchers:
+      - alertname =~ "ExecutionHeadStale|ExecutionLowPeers|BeaconSeesExecutionOffline"
+  - source_matchers:
+      - alertname = "BeaconNodeDown"
+    target_matchers:
+      - alertname =~ "BeaconSyncDistance|BeaconLowPeers|BeaconNotReady|ValidatorQueryFailing"
+
+receivers:
+  - name: telegram
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/secrets/telegram_bot_token
+        chat_id_file: /etc/alertmanager/secrets/telegram_chat_id
+        send_resolved: true
+  - name: heartbeat
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/heartbeat_url
+        send_resolved: false

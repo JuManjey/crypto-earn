@@ -1,0 +1,110 @@
+# Мониторинг ноды из T1: Prometheus + Alertmanager (Telegram) + Grafana + exporters.
+# Веб-интерфейсы опубликованы только на 127.0.0.1 — доступ через SSH-туннель или WireGuard.
+name: eth-monitoring
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+services:
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:?set in .env}
+    container_name: mon-prometheus
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./data/prometheus:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks: [monitoring, ethnet]
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:${ALERTMANAGER_VERSION:?set in .env}
+    container_name: mon-alertmanager
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./secrets/telegram_bot_token:/etc/alertmanager/secrets/telegram_bot_token:ro
+      - ./secrets/telegram_chat_id:/etc/alertmanager/secrets/telegram_chat_id:ro
+      - ./secrets/heartbeat_url:/etc/alertmanager/secrets/heartbeat_url:ro
+      - ./data/alertmanager:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks: [monitoring]
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:?set in .env}
+    container_name: mon-grafana
+    restart: unless-stopped
+    user: "472:472"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./data/grafana:/var/lib/grafana
+      - ./secrets/grafana_admin_password:/run/secrets/grafana_admin_password:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [monitoring]
+    logging: *logging
+
+  node-exporter:
+    image: prom/node-exporter:${NODE_EXPORTER_VERSION:?set in .env}
+    container_name: mon-node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    networks: [monitoring]
+    logging: *logging
+
+  blackbox:
+    image: prom/blackbox-exporter:${BLACKBOX_VERSION:?set in .env}
+    container_name: mon-blackbox
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    networks: [monitoring, ethnet]
+    logging: *logging
+
+  node-health-exporter:
+    build: ./exporter
+    image: local/node-health-exporter:1.0
+    container_name: mon-node-health-exporter
+    restart: unless-stopped
+    environment:
+      EL_RPC_URL: http://execution:8545
+      CL_API_URL: http://consensus:5052
+      VALIDATOR_IDS: ${VALIDATOR_IDS:-}
+      POLL_INTERVAL: "15"
+    networks: [monitoring, ethnet]
+    logging: *logging
+
+networks:
+  monitoring: {}
+  ethnet:
+    external: true
+    name: ${ETH_NETWORK_NAME:-hoodi-csm-net}

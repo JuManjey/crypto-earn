@@ -1,0 +1,28 @@
+[Unit]
+Description=Ethereum node health exporter (read-only, Prometheus)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/node-health-exporter/node_health_exporter.py
+EnvironmentFile=/etc/node-health-exporter.env
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

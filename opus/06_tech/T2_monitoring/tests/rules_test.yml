@@ -1,0 +1,93 @@
+rule_files:
+  - ../prometheus/rules/eth_node.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'eth_el_head_age_seconds{instance="nhe:9101",job="node-health"}'
+        values: '5 5 5 300 300 300 300 300 300'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ExecutionHeadStale
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: ExecutionHeadStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              instance: nhe:9101
+              job: node-health
+            exp_annotations:
+              summary: "Последний блок старше 2 минут"
+              description: "Возраст головы 5m 0s — нода не получает новые блоки."
+
+  - interval: 1m
+    input_series:
+      # 32.05 ETH -> вывод излишка до 32.00 ETH (нормальный sweep) -> алерта быть не должно
+      - series: 'eth_validator_balance_gwei{index="42",pubkey="0xabababab",job="node-health",instance="nhe:9101"}'
+        values: '32050000000x60 32000000000x60'
+    alert_rule_test:
+      - eval_time: 115m
+        alertname: ValidatorBalanceFalling
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      # Баланс ниже 32 ETH и падает — пропуски обязанностей
+      - series: 'eth_validator_balance_gwei{index="7",pubkey="0xcdcdcdcd",job="node-health",instance="nhe:9101"}'
+        values: '31990000000-10000x180'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: ValidatorBalanceFalling
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              index: "7"
+              pubkey: "0xcdcdcdcd"
+              job: node-health
+              instance: nhe:9101
+            exp_annotations:
+              summary: "Баланс валидатора 7 снижается"
+              description: "Баланс ниже 32 ETH и падает за последний час: пропуски обязанностей."
+
+  - interval: 1m
+    input_series:
+      - series: 'eth_validator_status{index="7",pubkey="0xcdcdcdcd",status="active_slashed",job="node-health",instance="nhe:9101"}'
+        values: '1x5'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ValidatorExitingOrSlashed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              index: "7"
+              pubkey: "0xcdcdcdcd"
+              status: active_slashed
+              job: node-health
+              instance: nhe:9101
+            exp_annotations:
+              summary: "Валидатор 7: статус active_slashed"
+              description: "Если выход не инициирован вами (или по запросу Lido) — немедленно разберитесь."
+
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{mountpoint="/",fstype="ext4",device="/dev/nvme0n1p2",job="node",instance="ne:9100"}'
+        values: '100000000000-100000000x1440'
+      - series: 'node_filesystem_size_bytes{mountpoint="/",fstype="ext4",device="/dev/nvme0n1p2",job="node",instance="ne:9100"}'
+        values: '400000000000x1440'
+    alert_rule_test:
+      - eval_time: 1000m
+        alertname: DiskWillFillIn7Days
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              mountpoint: /
+              fstype: ext4
+              device: /dev/nvme0n1p2
+              job: node
+              instance: ne:9100
+            exp_annotations:
+              summary: "Диск / заполнится примерно за 7 дней"
+              description: "Линейный прогноз по последним 12 часам."

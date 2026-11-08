@@ -1,0 +1,199 @@
+groups:
+  - name: heartbeat
+    rules:
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+        annotations:
+          summary: "Цепочка алертинга жива (должен срабатывать всегда)"
+          description: "Если внешний heartbeat-сервис перестал получать этот алерт — мониторинг или хост недоступны."
+
+  - name: scrape
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Не отвечает цель {{ $labels.job }} ({{ $labels.instance }})"
+          description: "Prometheus не может снять метрики более 3 минут."
+
+  - name: execution
+    rules:
+      - alert: ExecutionClientDown
+        expr: eth_el_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "JSON-RPC исполнительного клиента не отвечает"
+          description: "eth_el_up == 0 более 2 минут."
+      - alert: ExecutionClientSyncing
+        expr: eth_el_syncing == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Исполнительный клиент синхронизируется дольше 15 минут"
+          description: "Нормально после первого запуска; в работе означает отставание."
+      - alert: ExecutionHeadStale
+        expr: eth_el_head_age_seconds > 120
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Последний блок старше 2 минут"
+          description: "Возраст головы {{ $value | humanizeDuration }} — нода не получает новые блоки."
+      - alert: ExecutionLowPeers
+        expr: eth_el_peers < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Мало пиров у исполнительного клиента: {{ $value }}"
+          description: "Проверьте проброс порта P2P и исходящую связь."
+
+  - name: consensus
+    rules:
+      - alert: BeaconNodeDown
+        expr: eth_cl_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Beacon API не отвечает"
+          description: "eth_cl_up == 0 более 2 минут."
+      - alert: BeaconNodeSyncing
+        expr: eth_cl_syncing == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Beacon-нода синхронизируется дольше 15 минут"
+          description: "Валидатор в это время пропускает обязанности."
+      - alert: BeaconSyncDistance
+        expr: eth_cl_sync_distance > 8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Отставание от головы цепи: {{ $value }} слотов"
+          description: "Больше 8 слотов дольше 5 минут."
+      - alert: BeaconOptimistic
+        expr: eth_cl_optimistic == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Голова цепи оптимистичная"
+          description: "Консенсус-клиент не получил подтверждения от исполнительного клиента."
+      - alert: BeaconSeesExecutionOffline
+        expr: eth_cl_el_offline == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Beacon-нода не видит исполнительный клиент"
+          description: "Проверьте Engine API (порт 8551) и JWT-секрет."
+      - alert: BeaconLowPeers
+        expr: eth_cl_peers < 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Мало пиров у beacon-ноды: {{ $value }}"
+          description: "Проверьте проброс портов 9000/tcp+udp и 9001/udp."
+      - alert: BeaconNotReady
+        expr: probe_success{job="blackbox-beacon-ready"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "/eth/v1/node/health не возвращает 200"
+          description: "Нода не готова обслуживать валидатор."
+
+  - name: validators
+    rules:
+      - alert: ValidatorQueryFailing
+        expr: eth_validators_query_up == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Не удаётся получить статусы валидаторов"
+          description: "Проверьте VALIDATOR_IDS и доступность Beacon API."
+      - alert: ValidatorNotActive
+        expr: eth_validator_active == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Валидатор {{ $labels.index }} не в статусе active_ongoing"
+          description: "Ожидаемо в очереди активации; неожиданно — проверьте статус в обозревателе."
+      - alert: ValidatorExitingOrSlashed
+        expr: eth_validator_status{status=~"active_exiting|active_slashed|exited_slashed"} == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Валидатор {{ $labels.index }}: статус {{ $labels.status }}"
+          description: "Если выход не инициирован вами (или по запросу Lido) — немедленно разберитесь."
+      - alert: ValidatorSlashed
+        expr: eth_validator_slashed == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Валидатор {{ $labels.index }} наказан слешингом"
+          description: "Остановите все экземпляры VC с этим ключом и проверьте, не запущен ли он где-то ещё."
+      - alert: ValidatorBalanceFalling
+        expr: (eth_validator_balance_gwei - eth_validator_balance_gwei offset 1h) < 0 and eth_validator_balance_gwei < 32000000000
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Баланс валидатора {{ $labels.index }} снижается"
+          description: "Баланс ниже 32 ETH и падает за последний час: пропуски обязанностей."
+
+  - name: host
+    rules:
+      - alert: DiskSpaceLow
+        expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"} < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Свободно меньше 15% на {{ $labels.mountpoint }}"
+          description: "Осталось {{ $value | humanizePercentage }}."
+      - alert: DiskWillFillIn7Days
+        expr: predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}[12h], 7 * 24 * 3600) < 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Диск {{ $labels.mountpoint }} заполнится примерно за 7 дней"
+          description: "Линейный прогноз по последним 12 часам."
+      - alert: MemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Доступно меньше 10% RAM"
+          description: "Риск OOM-kill клиентов."
+      - alert: ClockNotSynchronised
+        expr: node_timex_sync_status == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Системное время не синхронизировано"
+          description: "Рассинхрон времени ведёт к пропущенным аттестациям."
+      - alert: ClockOffsetHigh
+        expr: abs(node_timex_offset_seconds) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Смещение часов {{ $value }} с"
+          description: "Больше 50 мс дольше 10 минут."
